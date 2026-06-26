@@ -1,44 +1,101 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import type { SiteListItem, GenbaRawData } from "../types";
+import { formatCurrency, formatDate } from "../types";
 
-interface SiteListItem {
-  id: string; projectName: string; clientName: string; siteAddress: string;
-  estimatedAmount: number; assignee: string; startDate: string; endDate: string;
-}
+const GAS_URL = import.meta.env.VITE_GAS_API_URL as string ||
+  'https://script.google.com/macros/s/AKfycbyPojVK0xgrKyMBPOYDcr7IFvaJsoW0JaJntjOvZEqRXnbZgdRz4NZkFdCpeA6oiDDY/exec';
 
 interface SiteImportModalProps {
-  isOpen: boolean; onClose: () => void; onImport: (items: SiteListItem[]) => void; existingSiteIds: string[];
+  isOpen: boolean;
+  onClose: () => void;
+  onImport: (items: SiteListItem[]) => void;
+  existingSiteIds: string[];
 }
 
-const mockSiteList: SiteListItem[] = [
-  { id:"S001", projectName:"田中邸 新築工事", clientName:"田中太郎", siteAddress:"東京都世田谷区成城1-2-3", estimatedAmount:35000000, assignee:"佐藤健一", startDate:"2026-07-01", endDate:"2026-12-15" },
-  { id:"S002", projectName:"鈴木邸 リフォーム工事", clientName:"鈴木一郎", siteAddress:"東京都杉並区荻窪4-5-6", estimatedAmount:12000000, assignee:"田中裕太", startDate:"2026-08-01", endDate:"2026-10-30" },
-  { id:"S003", projectName:"(株)山田商事 社屋改修", clientName:"(株)山田商事", siteAddress:"東京都港区赤坂7-8-9", estimatedAmount:180000000, assignee:"高橋誠", startDate:"2026-09-01", endDate:"2027-03-31" },
-  { id:"S004", projectName:"佐々木邸 増築工事", clientName:"佐々木花子", siteAddress:"神奈川県横浜市青葉区10-11", estimatedAmount:22000000, assignee:"佐藤健一", startDate:"2026-07-15", endDate:"2026-11-30" },
-  { id:"S005", projectName:"グリーンパーク マンション大規模修繕", clientName:"グリーンパーク管理組合", siteAddress:"千葉県船橋市本町12-13", estimatedAmount:95000000, assignee:"渡辺直美", startDate:"2026-10-01", endDate:"2027-06-30" },
-  { id:"S006", projectName:"中村医院 建替え工事", clientName:"中村健二", siteAddress:"埼玉県さいたま市浦和区14-15", estimatedAmount:68000000, assignee:"高橋誠", startDate:"2026-08-15", endDate:"2027-02-28" },
-  { id:"S007", projectName:"(株)ABC オフィス内装", clientName:"(株)ABC", siteAddress:"東京都渋谷区神宮前16-17", estimatedAmount:8500000, assignee:"田中裕太", startDate:"2026-07-01", endDate:"2026-08-31" },
-  { id:"S008", projectName:"高橋邸 外壁塗装工事", clientName:"高橋美香", siteAddress:"東京都練馬区石神井台18-19", estimatedAmount:4500000, assignee:"渡辺直美", startDate:"2026-06-20", endDate:"2026-07-31" },
-];
+function parseAmount(numStr: string): number {
+  if (!numStr) return 0;
+  const num = parseInt(numStr.toString().replace(/,/g, ''), 10);
+  return isNaN(num) ? 0 : num;
+}
 
-const formatCurrency = (n: number) => `¥${new Intl.NumberFormat("ja-JP").format(n)}`;
+function mapToSiteListItem(raw: GenbaRawData): SiteListItem {
+  return {
+    id: raw.id,
+    projectName: raw.name || "",
+    clientName: raw.contractor && raw.contractor !== "---" ? raw.contractor : "",
+    siteAddress: raw.remarks || "",
+    estimatedAmount: parseAmount(raw.expectedAmount) || parseAmount(raw.orderAmount),
+    assignee: raw.assignee && raw.assignee !== "---"
+      ? raw.assignee
+      : (raw.person && raw.person !== "---" ? raw.person : ""),
+    startDate: raw.startDate || "",
+    endDate: raw.endDate || "",
+  };
+}
 
 export default function SiteImportModal({ isOpen, onClose, onImport, existingSiteIds }: SiteImportModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [siteList, setSiteList] = useState<SiteListItem[]>([]);
+  const [rawDataMap, setRawDataMap] = useState<Map<string, GenbaRawData>>(new Map());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setLoading(true);
+    setError(null);
+
+    fetch(GAS_URL)
+      .then(res => res.json())
+      .then((rawData: GenbaRawData[]) => {
+        if (Array.isArray(rawData)) {
+          const validData = rawData.filter(r => r.name && r.name.trim() !== "");
+          const mapped = validData.map(mapToSiteListItem);
+          setSiteList(mapped);
+          // ステータス等の表示用に生データも保持
+          const map = new Map<string, GenbaRawData>();
+          validData.forEach(r => map.set(r.id, r));
+          setRawDataMap(map);
+        } else {
+          setSiteList([]);
+        }
+        setLoading(false);
+      })
+      .catch(e => {
+        console.error("Failed to fetch site list:", e);
+        setError("現場一覧システムとの通信に失敗しました。ネットワーク接続を確認してください。");
+        setLoading(false);
+      });
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const filteredSites = mockSiteList.filter(s => {
+  const filteredSites = siteList.filter(s => {
     const q = searchQuery.toLowerCase();
-    return s.projectName.toLowerCase().includes(q) || s.clientName.toLowerCase().includes(q) || s.siteAddress.toLowerCase().includes(q);
+    return s.projectName.toLowerCase().includes(q)
+      || s.clientName.toLowerCase().includes(q)
+      || s.assignee.toLowerCase().includes(q)
+      || s.siteAddress.toLowerCase().includes(q);
   });
 
   const isAlreadyImported = (id: string) => existingSiteIds.includes(id);
   const handleToggle = (id: string) => { if (isAlreadyImported(id)) return; setSelectedIds(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]); };
-  const handleImport = () => { onImport(mockSiteList.filter(s => selectedIds.includes(s.id))); setSelectedIds([]); setSearchQuery(""); };
+  const handleImport = () => { onImport(siteList.filter(s => selectedIds.includes(s.id))); setSelectedIds([]); setSearchQuery(""); };
   const handleClose = () => { setSelectedIds([]); setSearchQuery(""); onClose(); };
 
+  const getStatusClass = (status: string) => {
+    switch (status) {
+      case "受注済": return "ordered";
+      case "受注予定": return "prospect";
+      case "計画中": return "estimating";
+      case "失注": return "lost";
+      default: return "";
+    }
+  };
+
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title"><span className="material-symbols-outlined modal-title-icon">download</span>現場リストから取り込み</h2>
@@ -46,23 +103,45 @@ export default function SiteImportModal({ isOpen, onClose, onImport, existingSit
         </div>
 
         <div style={{ padding: "0 28px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12, color: "var(--google-text-sub)" }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: "var(--google-green)" }}>cloud_sync</span>
+            現場一覧システムからリアルタイム取得
+          </div>
           <div className="search-input-wrap">
             <span className="material-symbols-outlined search-icon">search</span>
-            <input type="text" className="search-input" placeholder="工事名・顧客名・住所で検索..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            <input type="text" className="search-input" placeholder="現場名・元請会社・担当者で検索..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
         </div>
 
         <div className="modal-body">
-          {filteredSites.length === 0 ? (
+          {loading ? (
+            <div className="empty-state" style={{ padding: "40px 20px" }}>
+              <span className="material-symbols-outlined empty-state-icon" style={{ fontSize: "48px", animation: "spin 1.5s linear infinite" }}>sync</span>
+              <p className="empty-state-title" style={{ fontSize: "15px" }}>現場一覧を取得中...</p>
+              <p style={{ fontSize: "12px", color: "var(--google-text-sub)", marginTop: 4 }}>現場一覧システムに接続しています</p>
+            </div>
+          ) : error ? (
+            <div className="empty-state" style={{ padding: "40px 20px" }}>
+              <span className="material-symbols-outlined empty-state-icon" style={{ fontSize: "48px", color: "var(--google-red)" }}>cloud_off</span>
+              <p className="empty-state-title" style={{ fontSize: "15px", color: "var(--google-red)" }}>接続エラー</p>
+              <p style={{ fontSize: "12px", color: "var(--google-text-sub)", marginTop: 4, lineHeight: 1.6 }}>{error}</p>
+              <button className="btn-secondary btn-sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); setError(null); fetch(GAS_URL).then(r => r.json()).then((d: GenbaRawData[]) => { if (Array.isArray(d)) { const v = d.filter(r => r.name && r.name.trim() !== ""); setSiteList(v.map(mapToSiteListItem)); const m = new Map<string, GenbaRawData>(); v.forEach(r => m.set(r.id, r)); setRawDataMap(m); } setLoading(false); }).catch(() => { setError("再接続に失敗しました"); setLoading(false); }); }}>
+                <span className="material-symbols-outlined btn-icon">refresh</span>再試行
+              </button>
+            </div>
+          ) : filteredSites.length === 0 ? (
             <div className="empty-state" style={{ padding: "40px 20px" }}>
               <span className="material-symbols-outlined empty-state-icon" style={{ fontSize: "48px" }}>search_off</span>
-              <p className="empty-state-title" style={{ fontSize: "15px" }}>該当する現場が見つかりません</p>
+              <p className="empty-state-title" style={{ fontSize: "15px" }}>
+                {siteList.length === 0 ? "現場一覧にデータがありません" : "該当する現場が見つかりません"}
+              </p>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {filteredSites.map(site => {
                 const imported = isAlreadyImported(site.id);
                 const checked = selectedIds.includes(site.id);
+                const raw = rawDataMap.get(site.id);
                 return (
                   <div key={site.id} onClick={() => handleToggle(site.id)} style={{
                     display: "flex", alignItems: "flex-start", gap: "14px", padding: "14px 16px", borderRadius: "12px",
@@ -79,14 +158,17 @@ export default function SiteImportModal({ isOpen, onClose, onImport, existingSit
                       {(checked || imported) && <span className="material-symbols-outlined" style={{ fontSize: 16, color: imported ? "var(--google-text-sub)" : "#FFF" }}>check</span>}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 14, fontWeight: 600 }}>{site.projectName}</span>
                         {imported && <span className="status-badge info" style={{ fontSize: 11, padding: "2px 10px" }}>取り込み済み</span>}
+                        {raw && raw.status && <span className={`status-badge ${getStatusClass(raw.status)}`} style={{ fontSize: 11, padding: "2px 10px" }}>{raw.status}</span>}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, color: "var(--google-text-sub)" }}>
-                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>{site.clientName}</span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>location_on</span>{site.siteAddress}</span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>{formatCurrency(site.estimatedAmount)}</span>
+                        {site.clientName && <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>business</span>{site.clientName}</span>}
+                        {site.assignee && <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>{site.assignee}</span>}
+                        {raw && raw.department && raw.department !== "---" && <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>corporate_fare</span>{raw.department}</span>}
+                        {site.estimatedAmount > 0 && <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>{formatCurrency(site.estimatedAmount)}</span>}
+                        {site.startDate && site.endDate && <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>calendar_month</span>{formatDate(site.startDate)} 〜 {formatDate(site.endDate)}</span>}
                       </div>
                     </div>
                   </div>
@@ -97,6 +179,9 @@ export default function SiteImportModal({ isOpen, onClose, onImport, existingSit
         </div>
 
         <div className="modal-footer">
+          <div style={{ flex: 1, fontSize: 12, color: "var(--google-text-sub)" }}>
+            {!loading && !error && <span>{siteList.length}件中 {filteredSites.length}件表示</span>}
+          </div>
           <button className="btn-secondary" onClick={handleClose}>キャンセル</button>
           <button className="btn-primary" onClick={handleImport} disabled={selectedIds.length === 0} style={{ opacity: selectedIds.length === 0 ? 0.5 : 1, cursor: selectedIds.length === 0 ? "not-allowed" : "pointer" }}>
             <span className="material-symbols-outlined btn-icon">download</span>取り込む（{selectedIds.length}件）

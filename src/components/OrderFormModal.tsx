@@ -1,20 +1,13 @@
 import { useState, useEffect } from "react";
-
-type OrderStatus = "見込み"|"見積中"|"見積提出済"|"受注済"|"施工中"|"完了"|"失注";
-
-interface OrderProject {
-  id: string; projectName: string; clientName: string; siteAddress: string;
-  estimatedAmount: number; orderAmount: number | null; status: OrderStatus;
-  assignee: string; startDate: string; endDate: string; importedFromSiteList: boolean;
-  siteListId: string | null; budgetRegistered: boolean; budgetRegisteredAt: string | null;
-  notes: string; createdAt: string; updatedAt: string;
-}
+import type { OrderProject, OrderStatus } from "../types";
+import { STATUS_OPTIONS } from "../types";
 
 interface OrderFormModalProps {
-  isOpen: boolean; onClose: () => void; onSave: (project: OrderProject) => void; editProject?: OrderProject | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (project: OrderProject) => void;
+  editProject?: OrderProject | null;
 }
-
-const ORDER_STATUS_OPTIONS: OrderStatus[] = ["見込み","見積中","見積提出済","受注済","施工中","完了","失注"];
 
 interface FormData {
   projectName: string; clientName: string; siteAddress: string; estimatedAmount: string;
@@ -116,7 +109,7 @@ export default function OrderFormModal({ isOpen, onClose, onSave, editProject }:
             </div>
             <div className="form-group">
               <label className="form-label">ステータス</label>
-              <select name="status" className="form-select" value={formData.status} onChange={handleChange}>{ORDER_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}</select>
+              <select name="status" className="form-select" value={formData.status} onChange={handleChange}>{STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}</select>
             </div>
             <div className="form-group">
               <label className="form-label">担当者<span className="required">*</span></label>

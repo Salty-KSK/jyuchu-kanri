@@ -1,17 +1,5 @@
-type OrderStatus = "見込み"|"見積中"|"見積提出済"|"受注済"|"施工中"|"完了"|"失注";
-
-interface OrderProject {
-  id: string; projectName: string; clientName: string; siteAddress: string;
-  estimatedAmount: number; orderAmount: number | null; status: OrderStatus;
-  assignee: string; startDate: string; endDate: string; importedFromSiteList: boolean;
-  siteListId: string | null; budgetRegistered: boolean; budgetRegisteredAt: string | null;
-  notes: string; createdAt: string; updatedAt: string;
-}
-
-interface SyncLogEntry {
-  id: string; projectId: string; projectName: string; action: string;
-  status: "success" | "error"; timestamp: string; message: string;
-}
+import type { OrderProject, OrderStatus, SyncLogEntry } from "../types";
+import { STATUS_OPTIONS, statusToCssClass, formatCurrency, formatDate, formatDateTime } from "../types";
 
 interface OrderDetailDrawerProps {
   isOpen: boolean;
@@ -22,12 +10,6 @@ interface OrderDetailDrawerProps {
   onDelete: (projectId: string) => void;
   syncLogs: SyncLogEntry[];
 }
-
-const STATUS_OPTIONS: OrderStatus[] = ["見込み","見積中","見積提出済","受注済","施工中","完了","失注"];
-const statusToCssClass: Record<OrderStatus, string> = { 見込み:"prospect", 見積中:"estimating", 見積提出済:"submitted", 受注済:"ordered", 施工中:"in-progress", 完了:"completed", 失注:"lost" };
-const formatCurrency = (n: number) => "¥" + new Intl.NumberFormat("ja-JP").format(n);
-const formatDate = (s: string) => s ? new Date(s).toLocaleDateString("ja-JP") : "—";
-const formatDateTime = (s: string) => s ? new Date(s).toLocaleString("ja-JP") : "—";
 
 export default function OrderDetailDrawer({ isOpen, project, onClose, onStatusChange, onEdit, onDelete, syncLogs }: OrderDetailDrawerProps) {
   if (!isOpen || !project) return null;

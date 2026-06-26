@@ -1,68 +1,48 @@
 import { useState, useMemo, useCallback } from "react";
+import { budgetSupabase } from './budgetSupabaseClient';
+import { useProjects } from "./hooks/useProjects";
+import { useSyncLogs } from "./hooks/useSyncLogs";
+import { useSiteSync } from "./hooks/useSiteSync";
 import SiteImportModal from "./components/SiteImportModal";
 import OrderFormModal from "./components/OrderFormModal";
 import BudgetSyncNotification from "./components/BudgetSyncNotification";
 import OrderDetailDrawer from "./components/OrderDetailDrawer";
-
-// ── Types ──
-export type OrderStatus = "見込み" | "見積中" | "見積提出済" | "受注済" | "施工中" | "完了" | "失注";
-
-export interface OrderProject {
-  id: string; projectName: string; clientName: string; siteAddress: string;
-  estimatedAmount: number; orderAmount: number | null; status: OrderStatus;
-  assignee: string; startDate: string; endDate: string; importedFromSiteList: boolean;
-  siteListId: string | null; budgetRegistered: boolean; budgetRegisteredAt: string | null;
-  notes: string; createdAt: string; updatedAt: string;
-}
-
-export interface SyncLogEntry {
-  id: string; projectId: string; projectName: string; action: string;
-  status: "success" | "error"; timestamp: string; message: string;
-}
-
-export interface ToastNotification {
-  id: string; type: "success" | "error" | "warning"; title: string; message: string;
-}
-
-export interface SiteListItem {
-  id: string; projectName: string; clientName: string; siteAddress: string;
-  estimatedAmount: number; assignee: string; startDate: string; endDate: string;
-}
-
-const STATUS_OPTIONS: OrderStatus[] = ["見込み","見積中","見積提出済","受注済","施工中","完了","失注"];
-const statusToCssClass: Record<OrderStatus, string> = { 見込み:"prospect", 見積中:"estimating", 見積提出済:"submitted", 受注済:"ordered", 施工中:"in-progress", 完了:"completed", 失注:"lost" };
-
-const initialProjects: OrderProject[] = [
-  { id:"P001", projectName:"田中邸 新築工事", clientName:"田中太郎", siteAddress:"東京都世田谷区成城1-2-3", estimatedAmount:35000000, orderAmount:33000000, status:"受注済", assignee:"佐藤健一", startDate:"2026-07-01", endDate:"2026-12-15", importedFromSiteList:true, siteListId:"S001", budgetRegistered:true, budgetRegisteredAt:"2026-06-05T14:30:00", notes:"地盤調査完了済み。設計図面確定。", createdAt:"2026-05-20T09:00:00", updatedAt:"2026-06-05T14:30:00" },
-  { id:"P002", projectName:"鈴木邸 リフォーム工事", clientName:"鈴木一郎", siteAddress:"東京都杉並区荻窪4-5-6", estimatedAmount:12000000, orderAmount:null, status:"見積中", assignee:"田中裕太", startDate:"2026-08-01", endDate:"2026-10-30", importedFromSiteList:true, siteListId:"S002", budgetRegistered:false, budgetRegisteredAt:null, notes:"キッチン・浴室の全面改装。", createdAt:"2026-05-22T10:00:00", updatedAt:"2026-05-28T15:00:00" },
-  { id:"P003", projectName:"(株)山田商事 社屋改修", clientName:"(株)山田商事", siteAddress:"東京都港区赤坂7-8-9", estimatedAmount:180000000, orderAmount:175000000, status:"受注済", assignee:"高橋誠", startDate:"2026-09-01", endDate:"2027-03-31", importedFromSiteList:true, siteListId:"S003", budgetRegistered:true, budgetRegisteredAt:"2026-06-04T10:15:00", notes:"3フロア改装。仮設事務所手配済み。", createdAt:"2026-04-15T11:00:00", updatedAt:"2026-06-04T10:15:00" },
-  { id:"P004", projectName:"佐々木邸 増築工事", clientName:"佐々木花子", siteAddress:"神奈川県横浜市青葉区10-11", estimatedAmount:22000000, orderAmount:null, status:"見積提出済", assignee:"佐藤健一", startDate:"2026-07-15", endDate:"2026-11-30", importedFromSiteList:true, siteListId:"S004", budgetRegistered:false, budgetRegisteredAt:null, notes:"2階部分を増築。建築確認申請中。", createdAt:"2026-05-10T13:00:00", updatedAt:"2026-06-01T09:30:00" },
-  { id:"P005", projectName:"マンション大規模修繕", clientName:"グリーンパーク管理組合", siteAddress:"千葉県船橋市本町12-13", estimatedAmount:95000000, orderAmount:null, status:"見込み", assignee:"渡辺直美", startDate:"2026-10-01", endDate:"2027-06-30", importedFromSiteList:true, siteListId:"S005", budgetRegistered:false, budgetRegisteredAt:null, notes:"大規模修繕計画の初期段階。管理組合との協議中。", createdAt:"2026-06-01T08:00:00", updatedAt:"2026-06-03T16:00:00" },
-  { id:"P006", projectName:"中村医院 建替え工事", clientName:"中村健二", siteAddress:"埼玉県さいたま市浦和区14-15", estimatedAmount:68000000, orderAmount:65000000, status:"施工中", assignee:"高橋誠", startDate:"2026-04-01", endDate:"2026-10-31", importedFromSiteList:false, siteListId:null, budgetRegistered:true, budgetRegisteredAt:"2026-03-20T09:00:00", notes:"解体工事完了。基礎工事進行中。", createdAt:"2026-02-15T10:00:00", updatedAt:"2026-06-05T17:00:00" },
-  { id:"P007", projectName:"(株)ABC オフィス内装", clientName:"(株)ABC", siteAddress:"東京都渋谷区神宮前16-17", estimatedAmount:8500000, orderAmount:8200000, status:"完了", assignee:"田中裕太", startDate:"2026-03-01", endDate:"2026-05-15", importedFromSiteList:false, siteListId:null, budgetRegistered:true, budgetRegisteredAt:"2026-02-28T14:00:00", notes:"全工程完了。引き渡し済み。", createdAt:"2026-01-20T09:00:00", updatedAt:"2026-05-15T16:00:00" },
-  { id:"P008", projectName:"渡辺邸 外壁塗装工事", clientName:"渡辺次郎", siteAddress:"東京都練馬区石神井台20-21", estimatedAmount:4500000, orderAmount:null, status:"失注", assignee:"渡辺直美", startDate:"", endDate:"", importedFromSiteList:false, siteListId:null, budgetRegistered:false, budgetRegisteredAt:null, notes:"他社に決定。価格面での競合負け。", createdAt:"2026-04-10T11:00:00", updatedAt:"2026-05-20T10:00:00" },
-];
-
-const initialSyncLogs: SyncLogEntry[] = [
-  { id:"L001", projectId:"P001", projectName:"田中邸 新築工事", action:"予算管理システムに登録", status:"success", timestamp:"2026-06-05T14:30:00", message:"予算管理システムへの自動登録が完了しました" },
-  { id:"L002", projectId:"P003", projectName:"(株)山田商事 社屋改修", action:"予算管理システムに登録", status:"success", timestamp:"2026-06-04T10:15:00", message:"予算管理システムへの自動登録が完了しました" },
-  { id:"L003", projectId:"P006", projectName:"中村医院 建替え工事", action:"予算管理システムに登録", status:"success", timestamp:"2026-03-20T09:00:00", message:"予算管理システムへの自動登録が完了しました" },
-  { id:"L004", projectId:"P007", projectName:"(株)ABC オフィス内装", action:"予算管理システムに登録", status:"success", timestamp:"2026-02-28T14:00:00", message:"予算管理システムへの自動登録が完了しました" },
-];
+import SyncStatusBar from "./components/SyncStatusBar";
+import type { OrderProject, OrderStatus, SiteListItem, ToastNotification } from "./types";
+import { STATUS_OPTIONS, statusToCssClass, formatCurrency, formatDate } from "./types";
 
 type SortKey = "projectName"|"clientName"|"estimatedAmount"|"status"|"assignee"|"startDate";
 type SortDir = "asc"|"desc";
-const formatCurrency = (n: number) => "¥" + new Intl.NumberFormat("ja-JP").format(n);
-const formatDate = (s: string) => s ? new Date(s).toLocaleDateString("ja-JP") : "—";
 
 export default function App() {
-  const [projects, setProjects] = useState<OrderProject[]>(initialProjects);
-  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>(initialSyncLogs);
+  // ── Supabase Hooks ──
+  const {
+    projects,
+    loading: projectsLoading,
+    error: projectsError,
+    addProject,
+    updateProject,
+    deleteProject: removeProject,
+    importFromSiteList,
+  } = useProjects();
+
+  const { syncLogs, addSyncLog } = useSyncLogs();
+
+  const {
+    syncStatus,
+    lastSyncedAt,
+    lastSyncCount,
+    syncError,
+    triggerSync,
+    pushStatusToGAS,
+  } = useSiteSync(addSyncLog);
+
+  // ── ローカルUI State ──
   const [notifications, setNotifications] = useState<ToastNotification[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
-  const [sortKey, setSortKey] = useState<SortKey>("updatedAt" as SortKey);
+  const [sortKey, setSortKey] = useState<SortKey>("projectName");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [formModalOpen, setFormModalOpen] = useState(false);
@@ -76,71 +56,169 @@ export default function App() {
 
   const filteredProjects = useMemo(() => {
     let r = [...projects];
-    if (searchQuery) { const q=searchQuery.toLowerCase(); r=r.filter(p=>p.projectName.toLowerCase().includes(q)||p.clientName.toLowerCase().includes(q)||p.siteAddress.toLowerCase().includes(q)||p.assignee.toLowerCase().includes(q)); }
+    if (searchQuery) {
+      const q=searchQuery.toLowerCase();
+      r=r.filter(p=>p.projectName.toLowerCase().includes(q)||p.clientName.toLowerCase().includes(q)||p.siteAddress.toLowerCase().includes(q)||p.assignee.toLowerCase().includes(q));
+    }
     if (statusFilter!=="all") r=r.filter(p=>p.status===statusFilter);
     if (assigneeFilter!=="all") r=r.filter(p=>p.assignee===assigneeFilter);
     r.sort((a,b) => {
       let av:string|number="",bv:string|number="";
-      switch(sortKey){case"projectName":av=a.projectName;bv=b.projectName;break;case"clientName":av=a.clientName;bv=b.clientName;break;case"estimatedAmount":av=a.estimatedAmount;bv=b.estimatedAmount;break;case"status":av=STATUS_OPTIONS.indexOf(a.status);bv=STATUS_OPTIONS.indexOf(b.status);break;case"assignee":av=a.assignee;bv=b.assignee;break;case"startDate":av=a.startDate||"";bv=b.startDate||"";break;default:av=a.updatedAt;bv=b.updatedAt;}
+      switch(sortKey){
+        case"projectName":av=a.projectName;bv=b.projectName;break;
+        case"clientName":av=a.clientName;bv=b.clientName;break;
+        case"estimatedAmount":av=a.estimatedAmount;bv=b.estimatedAmount;break;
+        case"status":av=STATUS_OPTIONS.indexOf(a.status);bv=STATUS_OPTIONS.indexOf(b.status);break;
+        case"assignee":av=a.assignee;bv=b.assignee;break;
+        case"startDate":av=a.startDate||"";bv=b.startDate||"";break;
+        default:av=a.updatedAt;bv=b.updatedAt;
+      }
       if(typeof av==="number"&&typeof bv==="number")return sortDir==="asc"?av-bv:bv-av;
       return sortDir==="asc"?String(av).localeCompare(String(bv),"ja"):String(bv).localeCompare(String(av),"ja");
     });
     return r;
   }, [projects, searchQuery, statusFilter, assigneeFilter, sortKey, sortDir]);
 
-  const stats = useMemo(() => ({
-    total: projects.length,
-    ordered: projects.filter(p=>p.status==="受注済").length,
-    totalEstimated: projects.filter(p=>!["完了","失注"].includes(p.status)).reduce((s,p)=>s+p.estimatedAmount,0),
-    totalOrdered: projects.filter(p=>["受注済","施工中","完了"].includes(p.status)).reduce((s,p)=>s+(p.orderAmount||p.estimatedAmount),0),
-  }), [projects]);
-
   const addNotification = (type:"success"|"error"|"warning",title:string,message:string) => {
     setNotifications(prev=>[...prev,{id:`toast-${Date.now()}`,type,title,message}]);
   };
 
-  const handleSort = useCallback((key:SortKey) => { if(sortKey===key){setSortDir(d=>d==="asc"?"desc":"asc")}else{setSortKey(key);setSortDir("asc")} }, [sortKey]);
+  const handleSort = useCallback((key:SortKey) => {
+    if(sortKey===key){setSortDir(d=>d==="asc"?"desc":"asc")}else{setSortKey(key);setSortDir("asc")}
+  }, [sortKey]);
 
-  const handleImport = useCallback((items:SiteListItem[]) => {
-    const now=new Date().toISOString();
-    const np:OrderProject[]=items.map((item,idx)=>({id:`P${String(projects.length+idx+1).padStart(3,"0")}`,projectName:item.projectName,clientName:item.clientName,siteAddress:item.siteAddress,estimatedAmount:item.estimatedAmount,orderAmount:null,status:"見込み" as OrderStatus,assignee:item.assignee,startDate:item.startDate,endDate:item.endDate,importedFromSiteList:true,siteListId:item.id,budgetRegistered:false,budgetRegisteredAt:null,notes:"",createdAt:now,updatedAt:now}));
-    setProjects(prev=>[...prev,...np]);setImportModalOpen(false);
-    addNotification("success","取り込み完了",`${items.length}件の工事を現場リストから取り込みました`);
-  }, [projects.length]);
+  const handleImport = useCallback(async (items:SiteListItem[]) => {
+    try {
+      await importFromSiteList(items);
+      setImportModalOpen(false);
+      addNotification("success","取り込み完了",`${items.length}件の工事を現場リストから取り込みました`);
+    } catch {
+      addNotification("error","取り込みエラー","現場リストからの取り込みに失敗しました");
+    }
+  }, [importFromSiteList]);
 
-  const handleSaveProject = useCallback((project:OrderProject) => {
-    setProjects(prev=>{const i=prev.findIndex(p=>p.id===project.id);if(i>=0){const u=[...prev];u[i]=project;return u}return[...prev,project]});
-    setFormModalOpen(false);setEditingProject(null);
-    addNotification("success","保存完了",`「${project.projectName}」を保存しました`);
-  }, []);
+  const handleSaveProject = useCallback(async (project:OrderProject) => {
+    try {
+      const existingProject = projects.find(p => p.id === project.id);
+      if (existingProject) {
+        await updateProject(project);
+      } else {
+        await addProject(project);
+      }
+      setFormModalOpen(false);
+      setEditingProject(null);
+      addNotification("success","保存完了",`「${project.projectName}」を保存しました`);
+    } catch {
+      addNotification("error","保存エラー","プロジェクトの保存に失敗しました");
+    }
+  }, [projects, updateProject, addProject]);
 
-  const applyStatusChange = useCallback((projectId:string,newStatus:OrderStatus) => {
-    const now=new Date().toISOString();
-    setProjects(prev=>prev.map(p=>{
-      if(p.id!==projectId)return p;
-      const u={...p,status:newStatus,updatedAt:now};
-      if(newStatus==="受注済"&&!p.budgetRegistered){
-        u.budgetRegistered=true;u.budgetRegisteredAt=now;
-        setSyncLogs(prev=>[{id:`L${String(Date.now()).slice(-6)}`,projectId:p.id,projectName:p.projectName,action:"予算管理システムに登録",status:"success",timestamp:now,message:"予算管理システムへの自動登録が完了しました"},...prev]);
+  const applyStatusChange = useCallback(async (projectId:string, newStatus:OrderStatus) => {
+    const now = new Date().toISOString();
+    const p = projects.find(p=>p.id===projectId);
+    if (!p) return;
+
+    const updatedProject = { ...p, status: newStatus, updatedAt: now };
+
+    // 受注済に変更時の予算管理システム自動登録
+    if (newStatus === "受注済" && !p.budgetRegistered) {
+      updatedProject.budgetRegistered = true;
+      updatedProject.budgetRegisteredAt = now;
+    }
+
+    try {
+      await updateProject(updatedProject);
+
+      // === 予算管理システムへ実際にinsert ===
+      if (newStatus === "受注済" && !p.budgetRegistered && budgetSupabase) {
+        try {
+          // projectsテーブルにinsert
+          const { data: newProject, error: insertError } = await budgetSupabase
+            .from('projects')
+            .insert({
+              site_name: p.projectName,
+              address: p.siteAddress || '',
+              department: '',
+            })
+            .select('id')
+            .single();
+
+          if (insertError) throw insertError;
+
+          if (newProject) {
+            // order_phasesに初期フェーズも作成
+            await budgetSupabase.from('order_phases').insert({
+              project_id: newProject.id,
+              name: p.projectName,
+              start_date: p.startDate || null,
+              end_date: p.endDate || null,
+              contract_amount: p.orderAmount || p.estimatedAmount || 0,
+              net_cost_amount: 0,
+              sort_order: 0,
+            });
+
+            // 受注工事管理表側に予算プロジェクトIDを保存（後でカラム追加が必要）
+            console.log('[Budget] 予算管理にプロジェクト作成:', newProject.id);
+          }
+        } catch (budgetError) {
+          console.error('予算管理システムへの登録に失敗:', budgetError);
+          // 予算管理の失敗は受注工事管理表のステータス変更をブロックしない
+          addNotification("warning","予算管理連携警告",`予算管理システムへの自動登録に失敗しました。手動で登録してください。`);
+        }
+      }
+
+      // 予算管理ログ
+      if (newStatus === "受注済" && !p.budgetRegistered) {
+        await addSyncLog({
+          id: `L${String(Date.now()).slice(-6)}`,
+          projectId: p.id,
+          projectName: p.projectName,
+          action: "予算管理システムに登録",
+          status: "success",
+          timestamp: now,
+          message: "予算管理システムへの自動登録が完了しました",
+        });
         addNotification("success","予算管理システム連携",`「${p.projectName}」を予算管理システムに自動登録しました`);
       }
-      return u;
-    }));
-    setSelectedProject(prev=>{if(prev&&prev.id===projectId)return{...prev,status:newStatus,updatedAt:now,...(newStatus==="受注済"&&!prev.budgetRegistered?{budgetRegistered:true,budgetRegisteredAt:now}:{})};return prev});
+
+      // 現場リスト連携プロジェクトの場合、GASにステータスを書き戻し
+      if (p.siteListId) {
+        await pushStatusToGAS(p.siteListId, newStatus, p.projectName);
+      }
+
+      // 詳細ドロワーの表示を更新
+      setSelectedProject(prev => {
+        if (prev && prev.id === projectId) return updatedProject;
+        return prev;
+      });
+    } catch {
+      addNotification("error","更新エラー","ステータスの変更に失敗しました");
+    }
+
     setConfirmDialog(null);
-  }, []);
+  }, [projects, updateProject, addSyncLog, pushStatusToGAS]);
 
-  const handleStatusChange = useCallback((projectId:string,newStatus:OrderStatus) => {
-    const p=projects.find(p=>p.id===projectId);if(!p)return;
-    if(newStatus==="受注済"&&!p.budgetRegistered){setConfirmDialog({open:true,projectId,newStatus,projectName:p.projectName});return}
-    applyStatusChange(projectId,newStatus);
-  }, [projects,applyStatusChange]);
+  const handleStatusChange = useCallback((projectId:string, newStatus:OrderStatus) => {
+    const p = projects.find(p=>p.id===projectId);
+    if (!p) return;
+    if (newStatus === "受注済" && !p.budgetRegistered) {
+      setConfirmDialog({ open: true, projectId, newStatus, projectName: p.projectName });
+      return;
+    }
+    applyStatusChange(projectId, newStatus);
+  }, [projects, applyStatusChange]);
 
-  const handleDelete = useCallback((projectId:string) => {
-    const p=projects.find(p=>p.id===projectId);
-    setProjects(prev=>prev.filter(p=>p.id!==projectId));setDetailDrawerOpen(false);setSelectedProject(null);
-    if(p)addNotification("warning","削除完了",`「${p.projectName}」を削除しました`);
-  }, [projects]);
+  const handleDelete = useCallback(async (projectId:string) => {
+    const p = projects.find(p=>p.id===projectId);
+    try {
+      await removeProject(projectId);
+      setDetailDrawerOpen(false);
+      setSelectedProject(null);
+      if (p) addNotification("warning","削除完了",`「${p.projectName}」を削除しました`);
+    } catch {
+      addNotification("error","削除エラー","プロジェクトの削除に失敗しました");
+    }
+  }, [projects, removeProject]);
 
   const handleRowClick = useCallback((p:OrderProject)=>{setSelectedProject(p);setDetailDrawerOpen(true)},[]);
   const handleEdit = useCallback((p:OrderProject)=>{setDetailDrawerOpen(false);setEditingProject(p);setFormModalOpen(true)},[]);
@@ -157,6 +235,16 @@ export default function App() {
         <div className="app-header-title"><span className="material-symbols-outlined app-header-icon">assignment_turned_in</span>受注工事管理表</div>
         <div className="header-status connected"><div className="header-status-dot"/>オンライン</div>
       </header>
+
+      {/* 同期ステータスバー */}
+      <SyncStatusBar
+        syncStatus={syncStatus}
+        lastSyncedAt={lastSyncedAt}
+        lastSyncCount={lastSyncCount}
+        syncError={syncError}
+        onSync={triggerSync}
+      />
+
       <main className="app-main"><div className="fade-in">
         <div className="page-header" style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:16}}>
           <div>
@@ -169,20 +257,28 @@ export default function App() {
           </div>
         </div>
 
-        <div className="stats-grid">
-          <div className="stat-card blue"><div className="stat-value">{stats.total}</div><div className="stat-label">総件数</div></div>
-          <div className="stat-card green"><div className="stat-value">{stats.ordered}</div><div className="stat-label">受注済</div></div>
-          <div className="stat-card orange"><div className="stat-value">{formatCurrency(stats.totalEstimated)}</div><div className="stat-label">見込金額合計</div></div>
-          <div className="stat-card red"><div className="stat-value">{formatCurrency(stats.totalOrdered)}</div><div className="stat-label">受注金額合計</div></div>
-        </div>
-
         <div className="filter-bar">
           <div className="search-input-wrap"><span className="material-symbols-outlined search-icon">search</span><input type="text" className="search-input" placeholder="工事名・顧客名・住所で検索..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/></div>
           <select className="filter-select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">全ステータス</option>{STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}</select>
           <select className="filter-select" value={assigneeFilter} onChange={e=>setAssigneeFilter(e.target.value)}><option value="all">全担当者</option>{assignees.map(a=><option key={a} value={a}>{a}</option>)}</select>
         </div>
 
-        {filteredProjects.length===0?(
+        {projectsLoading ? (
+          <div className="card"><div className="empty-state">
+            <span className="material-symbols-outlined empty-state-icon" style={{animation:"spin 1.5s linear infinite"}}>sync</span>
+            <div className="empty-state-title">データを読み込み中...</div>
+            <div className="empty-state-description">Supabaseからプロジェクトデータを取得しています</div>
+          </div></div>
+        ) : projectsError ? (
+          <div className="card"><div className="empty-state">
+            <span className="material-symbols-outlined empty-state-icon" style={{color:"var(--google-red)"}}>cloud_off</span>
+            <div className="empty-state-title">接続エラー</div>
+            <div className="empty-state-description">{projectsError}</div>
+            <button className="btn-secondary btn-sm" style={{marginTop:16}} onClick={()=>window.location.reload()}>
+              <span className="material-symbols-outlined btn-icon">refresh</span>再読み込み
+            </button>
+          </div></div>
+        ) : filteredProjects.length===0?(
           <div className="card"><div className="empty-state"><span className="material-symbols-outlined empty-state-icon">search_off</span><div className="empty-state-title">該当する工事がありません</div><div className="empty-state-description">検索条件やフィルターを変更してお試しください。</div></div></div>
         ):(
           <div className="table-container"><table className="data-table"><thead><tr>

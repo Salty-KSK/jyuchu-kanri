@@ -1,8 +1,5 @@
 import { useEffect, useCallback } from "react";
-
-interface ToastNotification {
-  id: string; type: "success" | "error" | "warning"; title: string; message: string;
-}
+import type { ToastNotification } from "../types";
 
 interface BudgetSyncNotificationProps {
   notifications: ToastNotification[];
