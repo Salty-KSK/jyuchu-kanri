@@ -120,6 +120,12 @@ export default function App() {
 
     const updatedProject = { ...p, status: newStatus, updatedAt: now };
 
+    // 受注済以外に戻す場合、予算登録フラグをリセット
+    if (p.status === "受注済" && newStatus !== "受注済") {
+      updatedProject.budgetRegistered = false;
+      updatedProject.budgetRegisteredAt = null;
+    }
+
     // 受注済に変更時の予算管理システム自動登録
     if (newStatus === "受注済" && !p.budgetRegistered) {
       updatedProject.budgetRegistered = true;
@@ -132,18 +138,29 @@ export default function App() {
       // === 予算管理システムへ実際にinsert ===
       if (newStatus === "受注済" && !p.budgetRegistered) {
         try {
-          // projectsテーブルにinsert
-          const { data: newProject, error: insertError } = await budgetSupabase
+          // 重複チェック: 同名のプロジェクトが既に存在するか確認
+          const { data: existing } = await budgetSupabase
             .from('projects')
-            .insert({
-              site_name: p.projectName,
-              address: p.siteAddress || '',
-              department: '',
-            })
             .select('id')
-            .single();
+            .eq('site_name', p.projectName)
+            .limit(1);
 
-          if (insertError) throw insertError;
+          if (existing && existing.length > 0) {
+            console.log('[Budget] 既に予算管理に登録済み:', existing[0].id);
+            addNotification("success","予算管理システム連携",`「${p.projectName}」は既に予算管理に登録されています`);
+          } else {
+            // projectsテーブルにinsert
+            const { data: newProject, error: insertError } = await budgetSupabase
+              .from('projects')
+              .insert({
+                site_name: p.projectName,
+                address: p.siteAddress || '',
+                department: '',
+              })
+              .select('id')
+              .single();
+
+            if (insertError) throw insertError;
 
           if (newProject) {
             // order_phasesに初期フェーズも作成
@@ -158,7 +175,8 @@ export default function App() {
             });
 
             // 受注工事管理表側に予算プロジェクトIDを保存（後でカラム追加が必要）
-            console.log('[Budget] 予算管理にプロジェクト作成:', newProject.id);
+              console.log('[Budget] 予算管理にプロジェクト作成:', newProject.id);
+            }
           }
         } catch (budgetError) {
           console.error('予算管理システムへの登録に失敗:', budgetError);
@@ -201,7 +219,7 @@ export default function App() {
   const handleStatusChange = useCallback((projectId:string, newStatus:OrderStatus) => {
     const p = projects.find(p=>p.id===projectId);
     if (!p) return;
-    if (newStatus === "受注済" && !p.budgetRegistered) {
+    if (newStatus === "受注済") {
       setConfirmDialog({ open: true, projectId, newStatus, projectName: p.projectName });
       return;
     }
