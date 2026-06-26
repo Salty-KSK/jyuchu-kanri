@@ -120,23 +120,11 @@ export default function App() {
 
     const updatedProject = { ...p, status: newStatus, updatedAt: now };
 
-    // 受注済以外に戻す場合、予算登録フラグをリセット
-    if (p.status === "受注済" && newStatus !== "受注済") {
-      updatedProject.budgetRegistered = false;
-      updatedProject.budgetRegisteredAt = null;
-    }
-
-    // 受注済に変更時の予算管理システム自動登録
-    if (newStatus === "受注済" && !p.budgetRegistered) {
-      updatedProject.budgetRegistered = true;
-      updatedProject.budgetRegisteredAt = now;
-    }
-
     try {
       await updateProject(updatedProject);
 
-      // === 予算管理システムへ実際にinsert ===
-      if (newStatus === "受注済" && !p.budgetRegistered) {
+      // === 受注済に変更時、予算管理システムへ自動登録 ===
+      if (newStatus === "受注済") {
         try {
           // 重複チェック: 同名のプロジェクトが既に存在するか確認
           const { data: existing } = await budgetSupabase
@@ -162,42 +150,28 @@ export default function App() {
 
             if (insertError) throw insertError;
 
-          if (newProject) {
-            // order_phasesに初期フェーズも作成
-            await budgetSupabase.from('order_phases').insert({
-              project_id: newProject.id,
-              name: p.projectName,
-              start_date: p.startDate || null,
-              end_date: p.endDate || null,
-              contract_amount: p.orderAmount || p.estimatedAmount || 0,
-              net_cost_amount: 0,
-              sort_order: 0,
-            });
+            if (newProject) {
+              // order_phasesに初期フェーズも作成
+              await budgetSupabase.from('order_phases').insert({
+                project_id: newProject.id,
+                name: p.projectName,
+                start_date: p.startDate || null,
+                end_date: p.endDate || null,
+                contract_amount: p.orderAmount || p.estimatedAmount || 0,
+                net_cost_amount: 0,
+                sort_order: 0,
+              });
 
-            // 受注工事管理表側に予算プロジェクトIDを保存（後でカラム追加が必要）
               console.log('[Budget] 予算管理にプロジェクト作成:', newProject.id);
+              addNotification("success","予算管理システム連携",`「${p.projectName}」を予算管理システムに自動登録しました`);
             }
           }
         } catch (budgetError) {
           console.error('予算管理システムへの登録に失敗:', budgetError);
-          // 予算管理の失敗は受注工事管理表のステータス変更をブロックしない
           addNotification("warning","予算管理連携警告",`予算管理システムへの自動登録に失敗しました。手動で登録してください。`);
         }
       }
 
-      // 予算管理ログ
-      if (newStatus === "受注済" && !p.budgetRegistered) {
-        await addSyncLog({
-          id: `L${String(Date.now()).slice(-6)}`,
-          projectId: p.id,
-          projectName: p.projectName,
-          action: "予算管理システムに登録",
-          status: "success",
-          timestamp: now,
-          message: "予算管理システムへの自動登録が完了しました",
-        });
-        addNotification("success","予算管理システム連携",`「${p.projectName}」を予算管理システムに自動登録しました`);
-      }
 
       // 現場リスト連携プロジェクトの場合、GASにステータスを書き戻し
       if (p.siteListId) {
