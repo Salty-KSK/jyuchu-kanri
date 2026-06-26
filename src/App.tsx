@@ -130,7 +130,7 @@ export default function App() {
       await updateProject(updatedProject);
 
       // === 予算管理システムへ実際にinsert ===
-      if (newStatus === "受注済" && !p.budgetRegistered && budgetSupabase) {
+      if (newStatus === "受注済" && !p.budgetRegistered) {
         try {
           // projectsテーブルにinsert
           const { data: newProject, error: insertError } = await budgetSupabase
